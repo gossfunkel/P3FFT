@@ -11,7 +11,7 @@ from direct.showbase.ShowBase import ShowBase
 
 class CastBuffer:
     """A handle to data residing on the GPU."""
-    def __init__(self, buff, n_items, cast=np.float32):
+    def __init__(self, buff, n_items, cast=np.float64):
         self.buffer = buff
         self.n_items = n_items
         self.cast = cast
@@ -19,8 +19,8 @@ class CastBuffer:
 DIGIT_REVERSE_SHADER = """
 #version 430
 layout (local_size_x = 64) in;
-layout(std430, binding = 0) buffer DA { vec2 data_in[]; };
-layout(std430, binding = 1) buffer DR { vec2 data_out[]; };
+layout(std430, binding = 0) buffer DA { dvec2 data_in[]; };
+layout(std430, binding = 1) buffer DR { dvec2 data_out[]; };
 
 uniform uint nItems;
 uniform uint log16N;
@@ -45,8 +45,8 @@ void main() {
 RADIX16_BUTTERFLY_SHADER = """
 #version 430
 layout (local_size_x = 64) in;
-layout(std430, binding = 0) buffer DA { vec2 data_in[]; };
-layout(std430, binding = 1) buffer DR { vec2 data_out[]; };
+layout(std430, binding = 0) buffer DA { dvec2 data_in[]; };
+layout(std430, binding = 1) buffer DR { dvec2 data_out[]; };
 
 uniform uint nItems;
 uniform uint stage;
@@ -54,8 +54,8 @@ uniform int inverse;
 
 const float PI = 3.14159265358979323846;
 
-vec2 complex_mul(vec2 a, vec2 b) {
-    return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
+dvec2 complex_mul(dvec2 a, vec2 b) {
+    return dvec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
 }
 
 void main() {
@@ -70,19 +70,19 @@ void main() {
     uint base_idx = group_id * elements_per_group + elem_in_stage;
     
     // Load 16 elements
-    vec2 temp[16];
+    dvec2 temp[16];
     for (uint k = 0; k < 16; k++) {
         temp[k] = data_in[base_idx + k * stage];
     }
-    
+   
     // Compute 16-point DFT using twiddle factors
-    vec2 result[16];
+    dvec2 result[16];
     for (uint k = 0; k < 16; k++) {
-        result[k] = vec2(0.0, 0.0);
+        result[k] = dvec2(0.0, 0.0);
         for (uint n = 0; n < 16; n++) {
-            float angle = -1.0 * inverse * 2.0 * PI * float(k * n) / 16.0;
-            float angle_stage = -1.0 * inverse * 2.0 * PI * float(elem_in_stage * n) / float(elements_per_group);
-            float total_angle = angle + angle_stage;
+            double angle = -1.0 * inverse * 2.0 * PI * double(k * n) / 16.0;
+            double angle_stage = -1.0 * inverse * 2.0 * PI * double(elem_in_stage * n) / double(elements_per_group);
+            float total_angle = float(angle + angle_stage);
             vec2 twiddle = vec2(cos(total_angle), sin(total_angle));
             result[k] += complex_mul(temp[n], twiddle);
         }
@@ -119,16 +119,18 @@ class Radix16FFT:
         return node
 
     def push(self, data):
-        """Upload complex data to GPU as vec2."""
-        data = np.ascontiguousarray(data, dtype=np.complex64)
+        """Upload complex data to GPU as dvec2."""
+        data = np.ascontiguousarray(data, dtype=np.complex128)
         sbuf = ShaderBuffer("Data", data.tobytes(), GeomEnums.UH_stream)
-        return CastBuffer(sbuf, len(data), cast=np.complex64)
+        print(f'length of pushed buffer data: {len(data)}')
+        return CastBuffer(sbuf, len(data), cast=np.complex128)
 
     def fetch(self, gpu_handle):
         """Download buffer back to NumPy."""
         gsg = self.app.win.get_gsg()
         raw = self.app.graphics_engine.extract_shader_buffer_data(gpu_handle.buffer, gsg)
-        return np.frombuffer(raw, dtype=gpu_handle.cast)
+        print(f'length of fetched buffer: {len(raw)}')
+        return np.frombuffer(raw, dtype=gpu_handle.cast) # np.complex128?
 
     def fft(self, data, inverse=False):
         """Radix-16 Cooley-Tukey GPU implementation."""
@@ -143,7 +145,7 @@ class Radix16FFT:
         inv_flag = -1 if inverse else 1
 
         # Digit-Reversal Pass (base 16)
-        dr_out = ShaderBuffer("DR_Out", n * 8, GeomEnums.UH_stream)
+        dr_out = ShaderBuffer("DR_Out", n * 16, GeomEnums.UH_stream)
         self.dr_node.set_shader_input("DA", buf.buffer)
         self.dr_node.set_shader_input("DR", dr_out)
         self.dr_node.set_shader_input("nItems", int(n))
@@ -158,7 +160,7 @@ class Radix16FFT:
         # Radix-16 Butterfly Stages
         for s in range(log16n):
             stage_size = 16 ** s
-            out_sbuf = ShaderBuffer(f"Stage_{s}", n * 8, GeomEnums.UH_stream)
+            out_sbuf = ShaderBuffer(f"Stage_{s}", n * 16, GeomEnums.UH_stream)
             
             self.fft16_node.set_shader_input("DA", current_in_buf)
             self.fft16_node.set_shader_input("DR", out_sbuf)
@@ -174,7 +176,7 @@ class Radix16FFT:
             )
             current_in_buf = out_sbuf
 
-        res = CastBuffer(current_in_buf, n, cast=np.complex64)
+        res = CastBuffer(current_in_buf, n, cast=np.complex128)
         
         if inverse:
             return self.fetch(res) / n
@@ -192,9 +194,10 @@ class FFT16Demo(ShowBase):
         
         # Generate test signal
         t = np.linspace(0, 1, N)
-        x = np.sin(2 * np.pi * 50 * t) + 0.5 * np.sin(2 * np.pi * 120 * t)
+        x = np.array(np.sin(2 * np.pi * 50 * t, dtype=np.float64) + 0.5 * np.sin(2 * np.pi * 120 * t, dtype=np.float64), dtype=np.float64)
         x = x + 0.2 * np.random.randn(N)
-        x = x.astype(np.complex64)
+        x = x.astype(np.complex128)
+        print(f"test signal x length: {len(x)}")
 
         # GPU FFT
         t0 = time.perf_counter()
@@ -204,7 +207,7 @@ class FFT16Demo(ShowBase):
 
         # CPU FFT (reference)
         t1 = time.perf_counter()
-        final_cpu = np.fft.fft(x)
+        final_cpu = np.fft.fft(x) #, dtype=np.complex128)
         t_cpu = time.perf_counter() - t1
 
         # Display results
