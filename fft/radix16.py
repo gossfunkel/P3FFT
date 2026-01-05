@@ -165,12 +165,23 @@ class Radix16FFT:
             )
             current_in_buf = out_sbuf
 
+        # pass buffer to frag shader
+
         res = CastBuffer(current_in_buf, n, cast=np.complex64)
         
         if inverse:
             return self.fetch(res) / n
         return res
 
+    def rolling_fft(self, task, signal, window_size=256):
+        # generate window (dirichlet)
+        t = np.linspace(0, 1, window_size) + (self.frame_counter * 0.01)
+
+        # run compute fft
+        fft_handle = self.fft(signal.asType(np.complex64))
+        complex_result = self.fetch(fft_handle)
+
+        return np.abs(complex_result[:window_size // 2])
 
 class FFT16Demo(ShowBase):
     def __init__(self):
