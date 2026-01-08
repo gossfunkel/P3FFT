@@ -104,6 +104,8 @@ class Radix16FFT:
         self.dr_node = self._compile(DIGIT_REVERSE_SHADER)
         self.fft16_node = self._compile(RADIX16_BUTTERFLY_SHADER)
 
+        self.render_output = False
+
     def _setup_context(self):
         pipe = GraphicsPipeSelection.get_global_ptr().make_default_pipe()
         fb_prop = FrameBufferProperties()
@@ -175,16 +177,24 @@ class Radix16FFT:
             current_in_buf = out_sbuf
 
         # pass buffer to frag shader
-
+        if self.render_output:
+            # TODO make this object
+            self.outputNode.set_buffer(current_in_buf, n)
         res = CastBuffer(current_in_buf, n, cast=np.complex64)
         
         if inverse:
             return self.fetch(res) / n
         return res
 
-    def rolling_fft(self, task, signal, window_size=256):
+    def set_out(self, output: SSBOcard):
+        self.render_output = True
+
+        card = SSBOcard(base.render, )
+        self.outputNode = output
+
+    def rolling_fft(self, signal, frame_count, window_size=256):
         # generate window (dirichlet)
-        t = np.linspace(0, 1, window_size) + (self.frame_counter * 0.01)
+        t = np.linspace(0, 1, window_size) + (frame_count * 0.01)
 
         # run compute fft
         fft_handle = self.fft(signal.asType(np.complex64))
@@ -197,6 +207,7 @@ class FFT16Demo(ShowBase):
         load_prc_file_data("", "window-type none\naudio-library-name null")
         ShowBase.__init__(self)
         self.hmath = Radix16FFT(self)
+        self.frame_counter = 0.
 
     def run_test(self, N=65536):
         print(f"Testing Radix-16 {N}-point FFT...")
@@ -249,6 +260,24 @@ class FFT16Demo(ShowBase):
         print(f"IFFT Time:     {t_inv:.5f}s")
         print(f"Roundtrip Diff: {inv_diff:.3e}")
         print(f"IFFT Valid:    {inv_diff < 1e-1}")
+    
+    def rolling_test(self, task):
+        # Create two frequencies: 50Hz and a drifting high frequency
+        freq2 = 80 + 20 * np.sin(self.frame_counter * 0.05)
+        signal = np.sin(2 * np.pi * 50 * t) + 0.5 * np.sin(2 * np.pi * freq2 * t)
+        signal += 0.2 * np.random.randn(self.N) # Add noise
+        
+        # TODO compose new card
+        self.hmath.set_out(card)
+        self.hmath.rolling_fft(signal)
+
+        # --- Visualization ---
+        # Calculate Magnitude Spectrum
+        # We only need the first half (0 to Nyquist frequency)
+        magnitudes = np.abs(complex_result[:self.N // 2])
+
+        self.frame_counter += 1
+        return task.cont
 
 if __name__ == "__main__":
     # Test with different sizes (all powers of 16)
