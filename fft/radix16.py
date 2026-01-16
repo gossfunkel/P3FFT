@@ -1,6 +1,7 @@
 import numpy as np
 import math
 import time
+import textwrap
 from panda3d.core import (
     NodePath, Shader, ShaderAttrib, ShaderBuffer, 
     GeomEnums, ComputeNode, load_prc_file_data,
@@ -16,100 +17,22 @@ class CastBuffer:
         self.n_items = n_items
         self.cast = cast
 
-DIGIT_REVERSE_SHADER = """
-#version 430
-layout (local_size_x = 64) in;
-layout(std430, binding = 0) buffer DA { vec2 data_in[]; };
-layout(std430, binding = 1) buffer DR { vec2 data_out[]; };
-
-uniform uint nItems;
-uniform uint log16N;
-
-uint reverse_digits_base16(uint x, uint n) {
-    uint res = 0;
-    for (uint i = 0; i < n; i++) {
-        res = (res << 4) | (x & 0xF);
-        x >>= 4;
-    }
-    return res;
-}
-
-void main() {
-    uint gid = gl_GlobalInvocationID.x;
-    if (gid >= nItems) return;
-    uint target = reverse_digits_base16(gid, log16N);
-    data_out[target] = data_in[gid];
-}
-"""
-
-RADIX16_BUTTERFLY_SHADER = """
-#version 430
-layout (local_size_x = 64) in;
-layout(std430, binding = 0) buffer DA { vec2 data_in[]; };
-layout(std430, binding = 1) buffer DR { vec2 data_out[]; };
-
-uniform uint nItems;
-uniform uint stage;
-uniform int inverse;
-
-const float PI = 3.14159265358979323846;
-
-vec2 complex_mul(vec2 a, vec2 b) {
-    return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
-}
-
-void main() {
-    uint gid = gl_GlobalInvocationID.x;
-    uint elements_per_group = stage * 16;
-    uint num_groups = nItems / elements_per_group;
-    
-    if (gid >= num_groups * stage) return;
-    
-    uint group_id = gid / stage;
-    uint elem_in_stage = gid % stage;
-    uint base_idx = group_id * elements_per_group + elem_in_stage;
-    
-    vec2 temp[16];
-    for (uint k = 0; k < 16; k++) {
-        temp[k] = data_in[base_idx + k * stage];
-    }
-    
-    vec2 result[16];
-    for (uint k = 0; k < 16; k++) {
-        result[k] = vec2(0.0, 0.0);
-        for (uint n = 0; n < 16; n++) {
-            float angle = -1.0 * inverse * 2.0 * PI * float(k * n) / 16.0;
-            float angle_stage = -1.0 * inverse * 2.0 * PI * float(elem_in_stage * n) / float(elements_per_group);
-            float total_angle = angle + angle_stage;
-            vec2 twiddle = vec2(cos(total_angle), sin(total_angle));
-            result[k] += complex_mul(temp[n], twiddle);
-        }
-    }
-    
-    for (uint k = 0; k < 16; k++) {
-        data_out[base_idx + k * stage] = result[k];
-    }
-}
-"""
-
 class Radix16FFT:
-    def __init__(self, app):
-        self.app = app
-        self._setup_context()
+    def __init__(self, base, headless=False):
+        self.base = base
+        self._setup_context(headless)
         
-        # Compile Radix-16 FFT Shaders
-        self.dr_node = self._compile(DIGIT_REVERSE_SHADER)
-        self.fft16_node = self._compile(RADIX16_BUTTERFLY_SHADER)
+        # Compile FFT Shaders
+        self.fft16_node = self._compile(self.butterfly_shader)
 
-        self.render_output = False
-
-    def _setup_context(self):
-        pipe = GraphicsPipeSelection.get_global_ptr().make_default_pipe()
-        fb_prop = FrameBufferProperties()
-        win_prop = WindowProperties.size(1, 1)
-        self.app.win = self.app.graphics_engine.make_output(
-            pipe, "fft16_headless", 0, fb_prop, win_prop, GraphicsPipe.BF_refuse_window
-        )
+    def _setup_context(self, headless=False):
+        if headless:
+            pipe = GraphicsPipeSelection.get_global_ptr().make_default_pipe()
+            fb_prop = FrameBufferProperties()
+            win_prop = WindowProperties.size(1, 1)
+            self.base.win = self.base.graphics_engine.make_output(
+                pipe, "fft16_headless", 0, fb_prop, win_prop, GraphicsPipe.BF_refuse_window
+            )
 
     def _compile(self, code):
         shader = Shader.make_compute(Shader.SL_GLSL, code)
@@ -122,86 +45,141 @@ class Radix16FFT:
         sbuf = ShaderBuffer("Data", data.tobytes(), GeomEnums.UH_stream)
         return CastBuffer(sbuf, len(data), cast=np.complex64)
 
-    def fetch(self, gpu_handle):
-        gsg = self.app.win.get_gsg()
-        raw = self.app.graphics_engine.extract_shader_buffer_data(gpu_handle.buffer, gsg)
+    def fetch(self, gpu_handle, gsg=None):
+        gsg = gsg or self.base.win.get_gsg()
+        raw = self.base.graphics_engine.extract_shader_buffer_data(gpu_handle.buffer, gsg)
         return np.frombuffer(raw, dtype=gpu_handle.cast)
 
     def fft(self, data, inverse=False):
         buf = data if isinstance(data, CastBuffer) else self.push(data)
         n = buf.n_items
-
         log16n = int(math.log(n) / math.log(16))
-        if 16 ** log16n != n:
-            raise ValueError(f"Size must be power of 16, got {n}")
         
+        gsg = self.base.win.get_gsg()
         inv_flag = -1 if inverse else 1
 
-        dr_out = ShaderBuffer("DR_Out", n * 8, GeomEnums.UH_stream)
-        self.dr_node.set_shader_input("DA", buf.buffer)
-        self.dr_node.set_shader_input("DR", dr_out)
-        self.dr_node.set_shader_input("nItems", int(n))
-        self.dr_node.set_shader_input("log16N", int(log16n))
+        # Buffer A starts with the RAW input
+        buf_a = buf.buffer 
+        buf_b = ShaderBuffer("FFT_Pong", n * 8, GeomEnums.UH_stream)
         
-        self.app.graphics_engine.dispatch_compute(
-            ((n + 63) // 64, 1, 1), self.dr_node.get_attrib(ShaderAttrib), self.app.win.get_gsg()
-        )
-        
-        current_in_buf = dr_out
+        current_in = buf_a
+        current_out = buf_b
 
         for s in range(log16n):
-            stage_size = 16 ** s
-            out_sbuf = ShaderBuffer(f"Stage_{s}", n * 8, GeomEnums.UH_stream)
+            L = 16**s  # Size of the sub-transforms from previous stage
             
-            self.fft16_node.set_shader_input("DA", current_in_buf)
-            self.fft16_node.set_shader_input("DR", out_sbuf)
+            self.fft16_node.set_shader_input("DataIn", current_in)
+            self.fft16_node.set_shader_input("DataOut", current_out)
+            self.fft16_node.set_shader_input("L", int(L))
             self.fft16_node.set_shader_input("nItems", int(n))
-            self.fft16_node.set_shader_input("stage", int(stage_size))
             self.fft16_node.set_shader_input("inverse", inv_flag)
-
-            num_work_items = (n // 16) 
-            self.app.graphics_engine.dispatch_compute(
-                ((num_work_items + 63) // 64, 1, 1), 
-                self.fft16_node.get_attrib(ShaderAttrib), 
-                self.app.win.get_gsg()
+            
+            num_workgroups_x = (n // 16) // 16
+            num_workgroups_y = 1
+            
+            self.base.graphics_engine.dispatch_compute(
+                (num_workgroups_x, num_workgroups_y, 1), 
+                self.fft16_node.get_attrib(ShaderAttrib), gsg
             )
-            current_in_buf = out_sbuf
+            
+            current_in, current_out = current_out, current_in
 
-        # pass buffer to frag shader
-        if self.render_output:
-            # TODO make this object
-            self.outputNode.set_buffer(current_in_buf, n)
-        res = CastBuffer(current_in_buf, n, cast=np.complex64)
-        
-        if inverse:
-            return self.fetch(res) / n
-        return res
+        # Result is in current_in because of the final swap
+        return CastBuffer(current_in, n, cast=np.complex64)
 
-    def set_out(self, output: SSBOcard):
-        self.render_output = True
+    @property
+    def butterfly_shader(self) -> str:
+        return textwrap.dedent("""
+#version 430
+layout (local_size_x = 64) in;
 
-        card = SSBOcard(base.render, )
-        self.outputNode = output
+layout(std430, binding = 0) buffer DataIn  { vec2 data_in[]; };
+layout(std430, binding = 1) buffer DataOut { vec2 data_out[]; };
 
-    def rolling_fft(self, signal, frame_count, window_size=256):
-        # generate window (dirichlet)
-        t = np.linspace(0, 1, window_size) + (frame_count * 0.01)
+uniform uint nItems;
+uniform uint L;
+uniform int inverse;
 
-        # run compute fft
-        fft_handle = self.fft(signal.asType(np.complex64))
-        complex_result = self.fetch(fft_handle)
+const float PI = 3.14159265358979323846;
 
-        return np.abs(complex_result[:window_size // 2])
+vec2 cmul(vec2 a, vec2 b) {
+    return vec2(
+        a.x * b.x - a.y * b.y,
+        a.x * b.y + a.y * b.x
+    );
+}
+
+/* Radix-16 DFT roots: exp(-i*2*pi*k/16) */
+const vec2 W16[16] = vec2[16](
+    vec2( 1.0000000,  0.0000000),
+    vec2( 0.9238795, -0.3826834),
+    vec2( 0.7071068, -0.7071068),
+    vec2( 0.3826834, -0.9238795),
+    vec2( 0.0000000, -1.0000000),
+    vec2(-0.3826834, -0.9238795),
+    vec2(-0.7071068, -0.7071068),
+    vec2(-0.9238795, -0.3826834),
+    vec2(-1.0000000,  0.0000000),
+    vec2(-0.9238795,  0.3826834),
+    vec2(-0.7071068,  0.7071068),
+    vec2(-0.3826834,  0.9238795),
+    vec2( 0.0000000,  1.0000000),
+    vec2( 0.3826834,  0.9238795),
+    vec2( 0.7071068,  0.7071068),
+    vec2( 0.9238795,  0.3826834)
+);
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint groups = nItems >> 4;
+    if (gid >= groups) return;
+
+    uint j = gid % L;
+    uint k = gid / L;
+    uint stride = groups;
+
+    /* Load + stage twiddle */
+    vec2 x[16];
+    for (uint r = 0; r < 16; r++) {
+        vec2 v = data_in[j + r * stride + k * L];
+
+        float ang = -float(inverse) * 2.0 * PI
+                    * float(r * j) / float(L * 16);
+
+        vec2 tw = vec2(cos(ang), sin(ang));
+        x[r] = cmul(v, tw);
+    }
+
+    /* Inner radix-16 DFT (no trig) */
+    vec2 y[16];
+    for (uint r = 0; r < 16; r++) {
+        vec2 acc = vec2(0.0, 0.0);
+        for (uint m = 0; m < 16; m++) {
+            acc += cmul(x[m], W16[(r * m) & 15u]);
+        }
+        y[r] = acc;
+    }
+
+    /* Stockham scatter */
+    uint base = k * (L * 16);
+    for (uint r = 0; r < 16; r++) {
+        data_out[j + r * L + base] = y[r];
+    }
+}
+        """)
 
 class FFT16Demo(ShowBase):
-    def __init__(self):
-        load_prc_file_data("", "window-type none\naudio-library-name null")
+    def __init__(self, headless=True):
         ShowBase.__init__(self)
-        self.hmath = Radix16FFT(self)
-        self.frame_counter = 0.
+        self.hmath = Radix16FFT(self, headless=headless)
 
-    def run_test(self, N=65536):
-        print(f"Testing Radix-16 {N}-point FFT...")
+    def run_test(self, N=65536, output=True, test_inverse=True, gsg=None):
+        gsg = gsg or self.win.get_gsg()
+        def out(*args, **kw):
+            if output:
+                print(*args, **kw)
+
+        out(f"Testing Radix-16 {N}-point FFT...")
         
         # Generate test signal
         t = np.linspace(0, 1, N)
@@ -212,7 +190,7 @@ class FFT16Demo(ShowBase):
         # GPU
         t0 = time.perf_counter()
         g_res_handle = self.hmath.fft(x)
-        final_gpu = self.hmath.fetch(g_res_handle)
+        final_gpu = self.hmath.fetch(g_res_handle, gsg=gsg)
         t_gpu = time.perf_counter() - t0
 
         # CPU (reference)
@@ -221,64 +199,85 @@ class FFT16Demo(ShowBase):
         t_cpu = time.perf_counter() - t1
 
         # Results
-        print("\n" + "="*90)
-        print(f"{'Index':<8} | {'GPU Value':<30} | {'CPU Value':<30} | {'Abs Diff':<12}")
-        print("-" * 90)
+        out("\n" + "="*90)
+        out(f"{'Index':<8} | {'GPU Value':<30} | {'CPU Value':<30} | {'Abs Diff':<12}")
+        out("-" * 90)
         for i in range(100, 120): 
             g = final_gpu[i]
             c = final_cpu[i]
             diff = abs(g - c)
-            print(f"{i:<8} | {str(g):<30} | {str(c):<30} | {diff:.3e}")
-        print("="*90 + "\n")
+            out(f"{i:<8} | {str(g):<30} | {str(c):<30} | {diff:.3e}")
+        out("="*90 + "\n")
 
         max_diff = np.max(np.abs(final_gpu - final_cpu))
         mean_diff = np.mean(np.abs(final_gpu - final_cpu))
-        
-        print(f"GPU Time:  {t_gpu:.5f}s")
-        print(f"CPU Time:  {t_cpu:.5f}s")
-        print(f"Speedup:   {t_cpu/t_gpu:.2f}x")
-        print(f"Max Diff:  {max_diff:.3e}")
-        print(f"Mean Diff: {mean_diff:.3e}")
-        print(f"Valid:     {max_diff < 1e-1}")
-        
-        # Inverse FFT
-        print("\nTesting Inverse FFT...")
-        t2 = time.perf_counter()
-        final_inv = self.hmath.fft(g_res_handle, inverse=True)
-        t_inv = time.perf_counter() - t2
-        
-        inv_diff = np.max(np.abs(final_inv - x))
-        print(f"IFFT Time:     {t_inv:.5f}s")
-        print(f"Roundtrip Diff: {inv_diff:.3e}")
-        print(f"IFFT Valid:    {inv_diff < 1e-1}")
+
+        if max_diff > 1.1: # DO NOT REMOVE THIS
+            raise ValueError("Mismatch")
+
+        out(f"GPU Time:  {t_gpu:.5f}s")
+        out(f"CPU Time:  {t_cpu:.5f}s")
+        out(f"Speedup:   {t_cpu/t_gpu:.2f}x")
+        out(f"Max Diff:  {max_diff:.3e}")
+        out(f"Mean Diff: {mean_diff:.3e}")
+        out(f"Valid:     {max_diff < 1e-1}")
     
-    def rolling_test(self, task):
-        # Create two frequencies: 50Hz and a drifting high frequency
-        freq2 = 80 + 20 * np.sin(self.frame_counter * 0.05)
-        signal = np.sin(2 * np.pi * 50 * t) + 0.5 * np.sin(2 * np.pi * freq2 * t)
-        signal += 0.2 * np.random.randn(self.N) # Add noise
-        
-        # TODO compose new card
-        self.hmath.set_out(card)
-        self.hmath.rolling_fft(signal)
+        # Inverse FFT
+        if test_inverse:
+            out("\nTesting Inverse FFT...")
+            t2 = time.perf_counter()
+            final_inv = self.hmath.fft(g_res_handle, inverse=True)
+            t_inv = time.perf_counter() - t2
+            inv_diff = np.max(np.abs(final_inv - x))
+            out(f"IFFT Time:     {t_inv:.5f}s")
+            out(f"Roundtrip Diff: {inv_diff:.3e}")
+            out(f"IFFT Valid:    {inv_diff < 1e-1}")
 
-        # --- Visualization ---
-        # Calculate Magnitude Spectrum
-        # We only need the first half (0 to Nyquist frequency)
-        magnitudes = np.abs(complex_result[:self.N // 2])
+        return t_gpu, t_cpu
 
-        self.frame_counter += 1
-        return task.cont
+def benchmark_gpu_avg(count = 30):
+    for k, v in {
+        "window-type":          "none",
+        "audio-library-name":   "null",
+        "sync-video":           "#f",
+    }.items():
+        load_prc_file_data("", f"{k} {v}")
+
+    app = FFT16Demo(headless=True)
+    gpu_times = []
+    cpu_times = []
+    gsg = app.win.get_gsg()
+    for i in range(count):
+        t_gpu, t_cpu = app.run_test(N=16**4, output=True, test_inverse=False, gsg=gsg)
+        gpu_times.append(t_gpu)
+        cpu_times.append(t_cpu)
+        print(f"Run {i+1}: GPU={t_gpu:.5f}s, CPU={t_cpu:.5f}s, Speedup={t_cpu/t_gpu:.2f}x")
+        app.task_mgr.step()
+
+    
+    # Discard warm-up 
+    gpu_times = gpu_times[1:]
+    cpu_times = cpu_times[1:]
+
+    app.destroy()
+    total_gpu   = sum(gpu_times)
+    avg_gpu     = total_gpu / len(gpu_times)
+    max_gpu     = max(gpu_times)
+    min_gpu     = min(gpu_times)
+    
+    total_cpu   = sum(cpu_times)
+    avg_cpu     = total_cpu / len(cpu_times)
+    max_cpu     = max(cpu_times)
+    min_cpu     = min(cpu_times)
+    
+    print(f"\n{'='*60}")
+    print(f"BENCHMARK RESULTS ({len(gpu_times)} runs after warm-up):")
+    print(f"{'='*60}")
+    print(f"GPU: AVG={avg_gpu:.5f}s | MIN={min_gpu:.5f}s | MAX={max_gpu:.5f}s")
+    print(f"CPU: AVG={avg_cpu:.5f}s | MIN={min_cpu:.5f}s | MAX={max_cpu:.5f}s")
+    print(f"Speedup: {avg_cpu/avg_gpu:.2f}x")
+    print(f"GPU Times: {' '.join([f'{t:.3f}' for t in gpu_times[:10]])}")
+    print(f"CPU Times: {' '.join([f'{t:.3f}' for t in cpu_times[:10]])}")
 
 if __name__ == "__main__":
-    # Test with different sizes
-    sizes = [16**2, 16**3, 16**4, 16**5]  # 256, 4096, 65536
-    
-    for size in sizes:
-        print(f"\n{'='*90}")
-        print(f"Testing N = {size}")
-        print('='*90)
-        app = FFT16Demo()
-        app.run_test(N=size)
-        app.destroy()
-        print()
+    benchmark_gpu_avg(count=26)
