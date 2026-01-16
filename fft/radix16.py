@@ -1,4 +1,7 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> f0aa380 (pre pull push)
 import numpy as np
 import math
 import time
@@ -282,6 +285,7 @@ def benchmark_gpu_avg(count = 30):
 
 if __name__ == "__main__":
     benchmark_gpu_avg(count=26)
+<<<<<<< HEAD
 =======
 import numpy as np
 import math
@@ -568,3 +572,5 @@ if __name__ == "__main__":
         app.destroy()
         print()
 >>>>>>> 65132e9 (updates)
+=======
+>>>>>>> f0aa380 (pre pull push)
