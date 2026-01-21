@@ -7,6 +7,7 @@ dependencies = [
     "panda3d>=1.11.0.dev3917",
     "pyaudio>=0.2.14",
     "scipy>=1.17.0",
+    "sounddevice>=0.5.3",
 ]
 
 [[tool.uv.index]]
