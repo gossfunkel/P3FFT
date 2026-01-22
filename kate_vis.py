@@ -71,13 +71,13 @@ class FFTSynth:
         # get the default audio device from sounddevice
         self.device = sd.default.device
 
-        self.freq = 24 # test tone
+        self.freq = 0 # test tone
         # generate an empty buffer
-        self.signal = np.zeros(self.fft_size, dtype=np.float32)
+        self.signal = np.zeros(self.fft_size, dtype=np.complex64)
         # set tones
         #for i in range(3):
         #    self.signal[self.freq*(i+1)] = np.float32(1.)
-        self.signal[self.freq] = np.float32(1.)
+        self.signal[self.freq] = np.complex64(1.,1.)
 
         # initialise an empty audio buffer for data from the fft - give it some extra space
         self.audio_buff = np.zeros(self.fft_size, dtype=np.float32)
@@ -118,7 +118,7 @@ class FFTSynth:
 
     def _load_buff(self, task):
         # get the data from the SSBO for the audio output stream
-        self.audio_buff[:] = self.fft.fetch(self.gpu_handle)
+        self.audio_buff[:] = np.array(self.fft.fetch(self.gpu_handle), dtype=np.float32)
         # update the card
         self.card.set_shader_input("ssbo", self.gpu_handle.buffer)
         return task.cont
@@ -136,7 +136,7 @@ class FFTSynth:
     def _init_load_fft(self):
         # prime the fft with an initial run and return the handle
         sig_buffer = ShaderBuffer("signal", self.signal.tobytes(), GeomEnums.UH_stream)
-        gpu_handle = CastBuffer(sig_buffer, self.fft_size, cast=np.float32)
+        gpu_handle = CastBuffer(sig_buffer, self.fft_size, cast=np.complex64)
         return self.fft.fft(gpu_handle, True)
 
     def __del__(self):
