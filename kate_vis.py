@@ -45,17 +45,17 @@ vec2 cart_to_polar( vec2 cartesian ) {
     float y = cartesian.y - .5;
     float rad = sqrt(x*x + y*y);
     // angle via euler
-    float theta = atan(y/x);
+    float theta = atan(y/x); //cos(x) + sin(y);
     // return angle normalised to 1 radian per rotation
     return vec2(rad,theta/2);
 }
 
 void main() {
-    vec2 uv = cart_to_polar(vtexcoord);
-    //vec2 uv = vtexcoord;
+    //vec2 uv = fract(cart_to_polar(vtexcoord));
+    vec2 uv = vtexcoord.yx;
     uint idx = uint(uv.y*signal.length());
-    float val = max(0., signal[idx] - uv.x + (.5 - uv.x));
-    p3d_FragColor = vec4(val-uv.x, -uv.x, val - uv.x, 1.);
+    float val = max(uv.x, signal[idx]) - 1;
+    p3d_FragColor = vec4(val-uv.x*1.5, val-uv.x, val - uv.x*1.45, 1.);
 }
 """.strip()
 
@@ -127,7 +127,7 @@ class FFTSynth:
         # add more tones for some variety ;P
         #self.freq *= int(np.sin(task.frame)*40)
         self.signal[self.freq] -= 1
-        self.freq += 1
+        self.freq = task.frame // 100
         self.signal[self.freq] += 1
         # run an inverse dft on the sample (frequency data)
         self.gpu_handle = self.fft.fft(self.signal, True)
