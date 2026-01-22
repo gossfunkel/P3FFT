@@ -63,7 +63,7 @@ CARD_SHDR = Shader.make(Shader.SL_GLSL, vertex=CARD_VTX, fragment= CARD_FRG)
 
 
 class FFTSynth:
-    def __init__(self, sample_rate = 44100, frames_per_buff = 1024, fft_size=4096):
+    def __init__(self, sample_rate = 48000, frames_per_buff = 1024, fft_size=4096):
         self.sample_rate = sample_rate
         self.frames_per_buff = frames_per_buff
         self.fft_size = fft_size
