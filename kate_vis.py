@@ -4,8 +4,10 @@ from direct.showbase.ShowBase import ShowBase
 from panda3d.core import (
         Shader, ShaderBuffer, GeomEnums, CardMaker
 )
-
+from collections import deque
 from fft import Radix16FFT, CastBuffer
+
+TAU: float = 2 * np.pi
 
 # 1) generate frequency information
 # 2) iFFT
@@ -66,7 +68,7 @@ vec3 render_circular( vec2 texc ) {
 }
 
 vec3 render_barchart( vec2 uv ) {
-    uint idx = uint(uv.x*signal.length());
+    uint idx = uint(uv.x*1024);
     float val = max(uv.y, signal[idx]) -1;
     return vec3(val-uv.y*1.5, val-uv.y, val - uv.y*1.45);
 }
@@ -81,31 +83,28 @@ CARD_SHDR = Shader.make(Shader.SL_GLSL, vertex=CARD_VTX, fragment= CARD_FRG)
 
 
 class FFTSynth:
-    def __init__(self, sample_rate = 44100, frames_per_buff = 1024, fft_size=4096):
-        self.sample_rate = sample_rate
-        self.frames_per_buff = frames_per_buff
-        self.fft_size = fft_size
+    def __init__(self, sample_rate = 48000, frames_per_buff = 1024, fft_size=4096):
+        self.sample_rate: int = sample_rate
+        self.frames_per_buff: int = frames_per_buff
+        self.fft_size: int = fft_size
 
         # get the default audio device from sounddevice
-        self.device = sd.default.device
+        self.device: int = sd.default.device
 
-        self.freq = 0 # test tone
-        # generate an empty buffer
-        self.signal = np.zeros(self.fft_size, dtype=np.complex64)
-        # set tones
-        #for i in range(3):
-        #    self.signal[self.freq*(i+1)] = np.float32(1.)
-        self.signal[self.freq] = np.complex64(1.,1.)
+        self.freq: int = 240 # test tone
+        self.amp: float = .7 # chill out a bit ! protect speakers
+        # generate a tone buffer for the fft
+        self.signal = self._init_gen_tone()
 
-        # initialise an empty audio buffer for data from the fft - give it some extra space
+        # initialise an empty audio buffer for data from the fft 
+        self.audio_buff_max_len: int = frames_per_buff * 12
         self.audio_buff = np.zeros(self.fft_size, dtype=np.float32)
 
         def _callb(output_data, frames, time, status): 
             # load audio from buffer from the fft into stream
             output_data[:, 0] = self.audio_buff[:frames_per_buff]
-            # loop the 'consumed' frames from start to the end of the buffer
-            self.audio_buff = np.append(self.audio_buff[frames_per_buff:],
-                                        self.audio_buff[:frames_per_buff])
+            # pop the 'consumed' frames
+            self.audio_buff = self.audio_buff[frames_per_buff:]
 
         # initialise the audio output stream
         self.stream = sd.OutputStream(
@@ -120,6 +119,12 @@ class FFTSynth:
         # set up the fft and SSBO handle
         self.fft = Radix16FFT(base)
         self.gpu_handle = self._init_load_fft()
+        # load some data into the audio buffer and ready the next tone data for the fft
+        self._init_load_buff()
+        self._init_gen_tone(self.fft_size)
+        self.gpu_handle = self._init_load_fft()
+        self._init_load_buff()
+        self._init_gen_tone(self.fft_size*2)
 
         # set up the visualiser card
         cm = CardMaker("screen_card")
@@ -130,32 +135,68 @@ class FFTSynth:
         self.card.set_shader_input("ssbo", self.gpu_handle.buffer)
 
         # start tasks and audio stream
-        base.taskMgr.add(self._load_buff, "load_buffer", sort=10)
+        base.taskMgr.add(self._load_buff, "load_buffer", sort=5)
         self.stream.start()
-        base.taskMgr.add(self._load_fft, "load_fft", sort=20)
+
+        # start the tone generator and the FFTs
+        base.taskMgr.add(self._gen_tone, "gen_tone", sort=15)
+        base.taskMgr.add(self._load_fft, "load_fft", sort=25)
+
+    def _gen_tone(self, task):
+        phase: float = self.fft_size * (task.frame + 3)
+        self.sample = np.array(np.exp(TAU * 
+                                      np.linspace(0,1,self.fft_size) * 
+                                      self.freq + 
+                                      phase), 
+                                dtype=np.complex64)
+        self.sample *= self.amp
+        return task.cont
+
+    def _init_gen_tone(self, phase: float = 0):
+        t = np.linspace(0,1,self.fft_size, dtype=np.complex64)
+        sample = np.sin(TAU * t * self.freq + phase)
+        sample *= self.amp
+        return sample
 
     def _load_buff(self, task):
         # get the data from the SSBO for the audio output stream
-        self.audio_buff[:] = np.array(self.fft.fetch(self.gpu_handle), dtype=np.float32)
+        from_fft = np.array(self.fft.fetch(self.gpu_handle), dtype=np.float32)
+        # add to back end of buffer
+        self.audio_buff = np.append(self.audio_buff, from_fft)
+
+        # only add to buffer if shorter than max size
+        #sum_buff_lengths = len(self.audio_buff) + len(from_fft)
+        #if sum_buff_lengths > self.audio_buff_max_len:
+        #    diff = self.audio_buff_max_len - len(self.audio_buff)
+        #    from_fft = from_fft[:diff]
+
         # update the card
         self.card.set_shader_input("ssbo", self.gpu_handle.buffer)
         return task.cont
+
+    def _init_load_buff(self):
+        # get the data from the SSBO for the audio output stream
+        from_fft = np.array(self.fft.fetch(self.gpu_handle), dtype=np.float32)
+        self.audio_buff = np.append(self.audio_buff, from_fft)
     
     def _load_fft(self, task):
-        # add more tones for some variety ;P
-        #self.freq *= int(np.sin(task.frame)*40)
-        self.signal[self.freq] -= 1
-        self.freq = task.frame // 100
-        self.signal[self.freq] += 1
+        self.gpu_handle = self.fft.fft(self.signal, False)
+        freqdata = self.fft.fetch(self.gpu_handle)
+        freqdata = freqdata / 2
+        freqdata[80:] = np.zeros(len(freqdata) - 80)
         # run an inverse dft on the sample (frequency data)
-        self.gpu_handle = self.fft.fft(self.signal, True)
+        self.gpu_handle = self.fft.fft(freqdata, True)
         return task.cont
 
     def _init_load_fft(self):
         # prime the fft with an initial run and return the handle
         sig_buffer = ShaderBuffer("signal", self.signal.tobytes(), GeomEnums.UH_stream)
         gpu_handle = CastBuffer(sig_buffer, self.fft_size, cast=np.complex64)
-        return self.fft.fft(gpu_handle, True)
+        gpu_handle = self.fft.fft(gpu_handle, False)
+        freqdata = self.fft.fetch(gpu_handle)
+        freqdata = freqdata/2
+        freqdata[80:] = np.zeros(len(freqdata) - 80)
+        return self.fft.fft(freqdata, True)
 
     def __del__(self):
         self.stream.stop()
