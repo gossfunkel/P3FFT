@@ -91,7 +91,8 @@ class FFTSynth:
         # get the default audio device from sounddevice
         self.device: int = sd.default.device
 
-        self.freq: int = 240 # test tone
+        self.freq: int = 320 # test tone
+        self.filter_freq: int = 120 # FFT filter
         self.amp: float = .7 # chill out a bit ! protect speakers
         # generate a tone buffer for the fft
         self.signal = self._init_gen_tone()
@@ -144,19 +145,18 @@ class FFTSynth:
 
     def _gen_tone(self, task):
         phase: float = self.fft_size * (task.frame + 3)
-        self.sample = np.array(np.exp(TAU * 
-                                      np.linspace(0,1,self.fft_size) * 
-                                      self.freq + 
-                                      phase), 
+        freq = self.freq * (1.5 + np.sin(40. * task.frame))
+        t = np.linspace(0,1,self.fft_size, dtype=np.float64)
+        self.sample = np.array(np.sin(TAU * t * freq + phase), 
                                 dtype=np.complex64)
         self.sample *= self.amp
         return task.cont
 
     def _init_gen_tone(self, phase: float = 0):
-        t = np.linspace(0,1,self.fft_size, dtype=np.complex64)
+        t = np.linspace(0,1,self.fft_size, dtype=np.float64)
         sample = np.sin(TAU * t * self.freq + phase)
         sample *= self.amp
-        return sample
+        return np.array(sample, dtype=np.complex64)
 
     def _load_buff(self, task):
         # get the data from the SSBO for the audio output stream
@@ -183,7 +183,7 @@ class FFTSynth:
         self.gpu_handle = self.fft.fft(self.signal, False)
         freqdata = self.fft.fetch(self.gpu_handle)
         freqdata = freqdata / 2
-        freqdata[80:] = np.zeros(len(freqdata) - 80)
+        freqdata[self.filter_freq:] = np.zeros(len(freqdata) - self.filter_freq)
         # run an inverse dft on the sample (frequency data)
         self.gpu_handle = self.fft.fft(freqdata, True)
         return task.cont
@@ -195,7 +195,7 @@ class FFTSynth:
         gpu_handle = self.fft.fft(gpu_handle, False)
         freqdata = self.fft.fetch(gpu_handle)
         freqdata = freqdata/2
-        freqdata[80:] = np.zeros(len(freqdata) - 80)
+        freqdata[self.filter_freq:] = np.zeros(len(freqdata) - self.filter_freq)
         return self.fft.fft(freqdata, True)
 
     def __del__(self):
