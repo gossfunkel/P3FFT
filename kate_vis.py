@@ -54,8 +54,8 @@ void main() {
     vec2 uv = fract(cart_to_polar(vtexcoord));
     //vec2 uv = vtexcoord;
     uint idx = uint(uv.y*signal.length());
-    float val = signal[idx] - uv.x*3;
-    p3d_FragColor = vec4(val, val, val, 1.);
+    float val = max(0., signal[idx] - uv.x + (.5 - uv.x));
+    p3d_FragColor = vec4(val-uv.x*4, -uv.x, val/4. - uv.x*8., 1.);
 }
 """.strip()
 
