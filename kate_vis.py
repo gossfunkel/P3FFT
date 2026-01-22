@@ -63,7 +63,7 @@ CARD_SHDR = Shader.make(Shader.SL_GLSL, vertex=CARD_VTX, fragment= CARD_FRG)
 
 
 class FFTSynth:
-    def __init__(self, sample_rate = 48000, frames_per_buff = 1024, fft_size=4096):
+    def __init__(self, sample_rate = 44100, frames_per_buff = 1024, fft_size=4096):
         self.sample_rate = sample_rate
         self.frames_per_buff = frames_per_buff
         self.fft_size = fft_size
@@ -71,14 +71,15 @@ class FFTSynth:
         # get the default audio device from sounddevice
         self.device = sd.default.device
 
-        self.freq = 100 # test tone
+        self.freq = 256 # test tone
         # generate an empty buffer
         self.signal = np.zeros(self.fft_size, dtype=np.float32)
         # set tones
-        for i in range(6):
-            self.signal[self.freq*(i+1)] = np.float32(1.)
+        #for i in range(3):
+        #    self.signal[self.freq*(i+1)] = np.float32(1.)
+        self.signal[self.freq] = np.float32(1.)
 
-        # initialise an empty audio buffer for data from the fft
+        # initialise an empty audio buffer for data from the fft - give it some extra space
         self.audio_buff = np.zeros(self.fft_size, dtype=np.float32)
 
         def _callb(output_data, frames, time, status): 
@@ -122,8 +123,9 @@ class FFTSynth:
     
     def _load_fft(self, task):
         # add more tones for some variety ;P
-        self.freq += int(np.sin(task.frame)*40)
-        self.signal[self.freq] += 1
+        #self.freq *= int(np.sin(task.frame)*40)
+        #self.freq += 1
+        #self.signal[self.freq] += 1
         # run an inverse dft on the sample (frequency data)
         self.gpu_handle = self.fft.fft(self.signal, True)
         return task.cont

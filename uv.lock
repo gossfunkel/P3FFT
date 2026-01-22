@@ -112,7 +112,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=2.4.1" },
-    { name = "panda3d", specifier = ">=1.11.0.dev3917" },
+    { name = "panda3d", specifier = ">=1.11.0.dev3936" },
     { name = "pyaudio", specifier = ">=0.2.14" },
     { name = "scipy", specifier = ">=1.17.0" },
     { name = "sounddevice", specifier = ">=0.5.3" },
@@ -120,17 +120,13 @@ requires-dist = [
 
 [[package]]
 name = "panda3d"
-version = "1.11.0.dev3917"
+version = "1.11.0.dev3936+shaderpipeline.274"
 source = { registry = "https://archive.panda3d.org/" }
 wheels = [
-    { url = "https://buildbot.panda3d.org/downloads/136e1279eaf13a2756648818e10f49b8b3621bdd/panda3d-1.11.0.dev3917-cp313-cp313-manylinux2014_x86_64.whl", hash = "md5:edf3c11dc54ffc4bcc25eba1d792e1fb" },
-    { url = "https://buildbot.panda3d.org/downloads/136e1279eaf13a2756648818e10f49b8b3621bdd/panda3d-1.11.0.dev3917-cp313-cp313-win_amd64.whl", hash = "md5:b1be651a71acd7b6c20cb135967a5278" },
-    { url = "https://buildbot.panda3d.org/downloads/136e1279eaf13a2756648818e10f49b8b3621bdd/panda3d-1.11.0.dev3917-cp313-cp313t-manylinux2014_x86_64.whl", hash = "md5:ae1f1f84495a807e0673a60c75b77c3e" },
-    { url = "https://buildbot.panda3d.org/downloads/136e1279eaf13a2756648818e10f49b8b3621bdd/panda3d-1.11.0.dev3917-cp313-cp313t-win_amd64.whl", hash = "md5:fa3552c224b73f75a23013053b45a89f" },
-    { url = "https://buildbot.panda3d.org/downloads/136e1279eaf13a2756648818e10f49b8b3621bdd/panda3d-1.11.0.dev3917-cp314-cp314-manylinux2014_x86_64.whl", hash = "md5:b3aa95e0d76bb7d23b93bfa830d80cc1" },
-    { url = "https://buildbot.panda3d.org/downloads/136e1279eaf13a2756648818e10f49b8b3621bdd/panda3d-1.11.0.dev3917-cp314-cp314-win_amd64.whl", hash = "md5:7a146aff0933c273a5d0875534c19cc0" },
-    { url = "https://buildbot.panda3d.org/downloads/136e1279eaf13a2756648818e10f49b8b3621bdd/panda3d-1.11.0.dev3917-cp314-cp314t-manylinux2014_x86_64.whl", hash = "md5:b80067bb30c21205d684e57f63952427" },
-    { url = "https://buildbot.panda3d.org/downloads/136e1279eaf13a2756648818e10f49b8b3621bdd/panda3d-1.11.0.dev3917-cp314-cp314t-win_amd64.whl", hash = "md5:8b3c61f54d6982aa69aad096c6a7d972" },
+    { url = "https://buildbot.panda3d.org/downloads/c6f10dc6e847e9934e054f68bcc0dc2e5c1b0afb/panda3d-1.11.0.dev3936+shaderpipeline.274-cp313-cp313-manylinux2014_x86_64.whl", hash = "md5:40f76fbdf90e4cd4fa039fcf3b36a450" },
+    { url = "https://buildbot.panda3d.org/downloads/c6f10dc6e847e9934e054f68bcc0dc2e5c1b0afb/panda3d-1.11.0.dev3936+shaderpipeline.274-cp313-cp313t-manylinux2014_x86_64.whl", hash = "md5:146c5b1d6b8a4e29e4bbb690a0586aee" },
+    { url = "https://buildbot.panda3d.org/downloads/c6f10dc6e847e9934e054f68bcc0dc2e5c1b0afb/panda3d-1.11.0.dev3936+shaderpipeline.274-cp314-cp314-manylinux2014_x86_64.whl", hash = "md5:f27cbc7224c4bf20b22372491ae0c3e6" },
+    { url = "https://buildbot.panda3d.org/downloads/c6f10dc6e847e9934e054f68bcc0dc2e5c1b0afb/panda3d-1.11.0.dev3936+shaderpipeline.274-cp314-cp314t-manylinux2014_x86_64.whl", hash = "md5:3f7421529ea70adeed32b4d09b9c3bfd" },
 ]
 
 [[package]]
