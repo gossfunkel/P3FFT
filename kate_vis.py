@@ -71,7 +71,7 @@ class FFTSynth:
         # get the default audio device from sounddevice
         self.device = sd.default.device
 
-        self.freq = 256 # test tone
+        self.freq = 24 # test tone
         # generate an empty buffer
         self.signal = np.zeros(self.fft_size, dtype=np.float32)
         # set tones
@@ -124,8 +124,9 @@ class FFTSynth:
     def _load_fft(self, task):
         # add more tones for some variety ;P
         #self.freq *= int(np.sin(task.frame)*40)
-        #self.freq += 1
-        #self.signal[self.freq] += 1
+        self.signal[self.freq] -= 1
+        self.freq += 1
+        self.signal[self.freq] += 1
         # run an inverse dft on the sample (frequency data)
         self.gpu_handle = self.fft.fft(self.signal, True)
         return task.cont
