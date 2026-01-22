@@ -31,10 +31,10 @@ class AudioCapture:
         sd.query_devices()
         #self.p.enumerate_devices()
 
-    def _handle_stream(self, output_data, frames, time, status):
+    def _handle_stream(self, input_data, output_data, frames, time, status):
         """Callback for SoundDevice stream"""
         if status: print(f"Audio status: {status}")
-        audio_data = np.frombuffer(output_data, dtype=np.float32)
+        audio_data = np.frombuffer(input_data, dtype=np.float32)
         if self.channels == 2:
             # mono convert
             audio_data = audio_data.reshape(-1, 2).mean(axis=1)
@@ -73,7 +73,8 @@ class AudioCapture:
                     device=device,
                     channels=self.channels,
                     dtype=np.float32,
-                    callback=self._handle_stream
+                    callback=self._handle_stream,
+                    prime_output_buffers_using_stream_callback=True
             )
 
             self.stream.start()
