@@ -83,7 +83,7 @@ CARD_SHDR = Shader.make(Shader.SL_GLSL, vertex=CARD_VTX, fragment= CARD_FRG)
 
 
 class FFTSynth:
-    def __init__(self, sample_rate = 48000, frames_per_buff = 1024, fft_size=4096):
+    def __init__(self, sample_rate = 48000, frames_per_buff = 2048, fft_size=65536):
         self.sample_rate: int = sample_rate
         self.frames_per_buff: int = frames_per_buff
         self.fft_size: int = fft_size
@@ -91,9 +91,9 @@ class FFTSynth:
         # get the default audio device from sounddevice
         self.device: int = sd.default.device
 
-        self.freq: int = 320 # test tone
-        self.filter_freq: int = 120 # FFT filter
-        self.amp: float = .7 # chill out a bit ! protect speakers
+        self.freq: int = 280 # test tone
+        self.filter_freq: int = 280 # FFT filter
+        self.amp: float = .01 # chill out a bit ! protect speakers
         # generate a tone buffer for the fft
         self.signal = self._init_gen_tone()
 
@@ -160,7 +160,7 @@ class FFTSynth:
 
     def _load_buff(self, task):
         # get the data from the SSBO for the audio output stream
-        from_fft = np.array(self.fft.fetch(self.gpu_handle), dtype=np.float32)
+        from_fft = np.array(self.fft.fetch(self.gpu_handle), dtype=np.float32) * self.amp
         # add to back end of buffer
         self.audio_buff = np.append(self.audio_buff, from_fft)
 
@@ -176,13 +176,13 @@ class FFTSynth:
 
     def _init_load_buff(self):
         # get the data from the SSBO for the audio output stream
-        from_fft = np.array(self.fft.fetch(self.gpu_handle), dtype=np.float32)
+        from_fft = np.array(self.fft.fetch(self.gpu_handle), dtype=np.float32) * self.amp
         self.audio_buff = np.append(self.audio_buff, from_fft)
     
     def _load_fft(self, task):
         self.gpu_handle = self.fft.fft(self.signal, False)
-        freqdata = self.fft.fetch(self.gpu_handle)
-        freqdata = freqdata / 2
+        freqdata = self.fft.fetch(self.gpu_handle).copy()
+        freqdata = freqdata * .5
         freqdata[self.filter_freq:] = np.zeros(len(freqdata) - self.filter_freq)
         # run an inverse dft on the sample (frequency data)
         self.gpu_handle = self.fft.fft(freqdata, True)
@@ -193,8 +193,8 @@ class FFTSynth:
         sig_buffer = ShaderBuffer("signal", self.signal.tobytes(), GeomEnums.UH_stream)
         gpu_handle = CastBuffer(sig_buffer, self.fft_size, cast=np.complex64)
         gpu_handle = self.fft.fft(gpu_handle, False)
-        freqdata = self.fft.fetch(gpu_handle)
-        freqdata = freqdata/2
+        freqdata = self.fft.fetch(gpu_handle).copy()
+        freqdata = freqdata * .5
         freqdata[self.filter_freq:] = np.zeros(len(freqdata) - self.filter_freq)
         return self.fft.fft(freqdata, True)
 
