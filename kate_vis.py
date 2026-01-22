@@ -2,7 +2,7 @@ import numpy as np
 import sounddevice as sd
 from direct.showbase.ShowBase import ShowBase
 from panda3d.core import (
-        ShaderBuffer, GeomEnums
+        Shader, ShaderBuffer, GeomEnums, CardMaker
 )
 
 from fft import Radix16FFT, CastBuffer
@@ -10,6 +10,50 @@ from fft import Radix16FFT, CastBuffer
 # 1) generate frequency information
 # 2) iFFT
 # 3) send audio data to sounddevice
+
+
+CARD_VTX = """
+#version 430
+
+uniform mat4 p3d_ModelViewProjectionMatrix;
+
+in vec4 p3d_Vertex;
+in vec2 texcoord;
+
+out vec2 vtexcoord;
+
+void main() {
+    gl_Position = p3d_ModelViewProjectionMatrix * p3d_Vertex;
+    vtexcoord = texcoord;
+}
+""".strip()
+
+CARD_FRG = """
+#version 430
+layout (std430, binding = 0) buffer ssbo { float signal[]; };
+
+in vec2 vtexcoord;
+
+out vec4 p3d_FragColor;
+
+const float TAU = 6.283185307179586;
+
+vec2 cart_to_polar( vec2 cartesian ) {
+    // distance from origin via pythagoras
+    float rad = sqrt(cartesian.x*cartesian.x + cartesian.y*cartesian.y);
+    // angle via euler
+    float theta = cos(cartesian.x)+sin(cartesian.y);
+    // return angle normalised to 1 radian per rotation
+    return vec2(rad,theta/2);
+}
+
+void main() {
+    vec2 uv = cart_to_polar(vtexcoord);
+    p3d_FragColor = vec4(uv.x, uv.y, 0., 1.);
+}
+""".strip()
+
+CARD_SHDR = Shader.make(Shader.SL_GLSL, vertex=CARD_VTX, fragment= CARD_FRG)
 
 
 class FFTSynth:
@@ -25,8 +69,8 @@ class FFTSynth:
         # generate an empty buffer
         self.signal = np.zeros(self.fft_size, dtype=np.float32)
         # set tones
-        for i in range(8):
-            self.signal[self.freq*i] = np.float32(1.)
+        for i in range(6):
+            self.signal[self.freq*(i+1)] = np.float32(1.)
 
         # initialise an empty audio buffer for data from the fft
         self.audio_buff = np.zeros(self.fft_size, dtype=np.float32)
@@ -51,6 +95,13 @@ class FFTSynth:
         # set up the fft and SSBO handle
         self.fft = Radix16FFT(base)
         self.gpu_handle = self._init_load_fft()
+
+        # set up the visualiser card
+        cm = CardMaker("screen_card")
+        cm.setFrameFullscreenQuad()
+        self.card = base.render2d.attach_new_node(cm.generate())
+        self.card.set_shader(CARD_SHDR)
+        self.card.set_shader_input("ssbo", self.gpu_handle.buffer)
 
         # start tasks and audio stream
         base.taskMgr.add(self._load_buff, "load_buffer", sort=10)
