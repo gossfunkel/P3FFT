@@ -51,11 +51,11 @@ vec2 cart_to_polar( vec2 cartesian ) {
 }
 
 void main() {
-    vec2 uv = fract(cart_to_polar(vtexcoord));
+    vec2 uv = cart_to_polar(vtexcoord);
     //vec2 uv = vtexcoord;
     uint idx = uint(uv.y*signal.length());
     float val = max(0., signal[idx] - uv.x + (.5 - uv.x));
-    p3d_FragColor = vec4(val-uv.x*4, -uv.x, val/4. - uv.x*8., 1.);
+    p3d_FragColor = vec4(val-uv.x, -uv.x, val - uv.x, 1.);
 }
 """.strip()
 
@@ -119,6 +119,8 @@ class FFTSynth:
     def _load_buff(self, task):
         # get the data from the SSBO for the audio output stream
         self.audio_buff[:] = self.fft.fetch(self.gpu_handle)
+        # update the card
+        self.card.set_shader_input("ssbo", self.gpu_handle.buffer)
         return task.cont
     
     def _load_fft(self, task):
