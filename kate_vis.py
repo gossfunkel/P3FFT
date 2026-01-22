@@ -50,12 +50,30 @@ vec2 cart_to_polar( vec2 cartesian ) {
     return vec2(rad,theta/2);
 }
 
+vec2 polar_to_cart( vec2 polar ) {
+    // origin is in the centre
+    float x = polar.x * cos(polar.y);
+    float y = polar.x * sin(polar.y);
+    return vec2(x,y);
+}
+
+vec3 render_circular( vec2 texc ) {
+    vec2 uvcirc = cart_to_polar(texc);
+    uint idx = uint(uvcirc.y*signal.length());
+    float amp = signal[idx];
+    float val = amp - uvcirc.x;
+    return vec3(val-uvcirc.x*1.5, val-uvcirc.x, val - uvcirc.x*1.45);
+}
+
+vec3 render_barchart( vec2 uv ) {
+    uint idx = uint(uv.x*signal.length());
+    float val = max(uv.y, signal[idx]) -1;
+    return vec3(val-uv.y*1.5, val-uv.y, val - uv.y*1.45);
+}
+
 void main() {
-    //vec2 uv = fract(cart_to_polar(vtexcoord));
-    vec2 uv = vtexcoord.yx;
-    uint idx = uint(uv.y*signal.length());
-    float val = max(uv.x, signal[idx]) - 1;
-    p3d_FragColor = vec4(val-uv.x*1.5, val-uv.x, val - uv.x*1.45, 1.);
+    vec3 col = render_barchart(vtexcoord);
+    p3d_FragColor = vec4(col, 1.);
 }
 """.strip()
 
