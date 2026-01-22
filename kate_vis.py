@@ -21,11 +21,12 @@ class FFTSynth:
         # get the default audio device from sounddevice
         self.device = sd.default.device
 
-        self.freq = 440 # test tone
+        self.freq = 100 # test tone
         # generate an empty buffer
         self.signal = np.zeros(self.fft_size, dtype=np.float32)
-        # set one frequency high
-        self.signal[self.freq] = np.float32(1.)
+        # set tones
+        for i in range(8):
+            self.signal[self.freq*i] = np.float32(1.)
 
         # initialise an empty audio buffer for data from the fft
         self.audio_buff = np.zeros(self.fft_size, dtype=np.float32)
