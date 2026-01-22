@@ -11,7 +11,7 @@ from fft import Radix16FFT, CastBuffer
 # 2) iFFT
 # 3) send audio data to sounddevice
 
-
+# a generic vertex shader for a card
 CARD_VTX = """
 #version 430
 
@@ -28,6 +28,7 @@ void main() {
 }
 """.strip()
 
+# a circular visualiser for waves, using data from the SSBO
 CARD_FRG = """
 #version 430
 layout (std430, binding = 0) buffer ssbo { float signal[]; };
@@ -40,16 +41,21 @@ const float TAU = 6.283185307179586;
 
 vec2 cart_to_polar( vec2 cartesian ) {
     // distance from origin via pythagoras
-    float rad = sqrt(cartesian.x*cartesian.x + cartesian.y*cartesian.y);
+    float x = cartesian.x - .5;
+    float y = cartesian.y - .5;
+    float rad = sqrt(x*x + y*y);
     // angle via euler
-    float theta = cos(cartesian.x)+sin(cartesian.y);
+    float theta = atan(y/x);
     // return angle normalised to 1 radian per rotation
     return vec2(rad,theta/2);
 }
 
 void main() {
-    vec2 uv = cart_to_polar(vtexcoord);
-    p3d_FragColor = vec4(uv.x, uv.y, 0., 1.);
+    vec2 uv = fract(cart_to_polar(vtexcoord));
+    //vec2 uv = vtexcoord;
+    uint idx = uint(uv.y*signal.length());
+    float val = signal[idx] - uv.x*3;
+    p3d_FragColor = vec4(val, val, val, 1.);
 }
 """.strip()
 
@@ -101,6 +107,7 @@ class FFTSynth:
         cm.setFrameFullscreenQuad()
         self.card = base.render2d.attach_new_node(cm.generate())
         self.card.set_shader(CARD_SHDR)
+        # make sure to pass it an ssbo- the fft gives us one!
         self.card.set_shader_input("ssbo", self.gpu_handle.buffer)
 
         # start tasks and audio stream
@@ -114,6 +121,9 @@ class FFTSynth:
         return task.cont
     
     def _load_fft(self, task):
+        # add more tones for some variety ;P
+        self.freq += int(np.sin(task.frame)*40)
+        self.signal[self.freq] += 1
         # run an inverse dft on the sample (frequency data)
         self.gpu_handle = self.fft.fft(self.signal, True)
         return task.cont
@@ -124,8 +134,19 @@ class FFTSynth:
         gpu_handle = CastBuffer(sig_buffer, self.fft_size, cast=np.float32)
         return self.fft.fft(gpu_handle, True)
 
+    def __del__(self):
+        self.stream.stop()
+        self.stream.close()
+
 if __name__ == "__main__":
+    # panda3d init
     ShowBase()
+    # init my synth thing
     FFTSynth()
+    # run panda3d (and the tasks and nodes ive loaded into it)
     base.run()
+
+    # make sure that stream is closed!
+    FFTSynth.stream.abort()
+
 
